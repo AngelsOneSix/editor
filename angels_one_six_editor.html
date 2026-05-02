@@ -61,7 +61,7 @@ const firebaseConfig = {
   projectId:         "angels-one-six",
   storageBucket:     "angels-one-six.firebasestorage.app",
   messagingSenderId: "1024178964228",
-  appId:             "1:1024178964280:web:856c4bbec1931f4ea1f251",
+  appId:             "1:1024178964228:web:856c4bbec1931f4ea1f251",
 };
 const fbApp  = initializeApp(firebaseConfig, "editor");
 const fbAuth = getAuth(fbApp);
@@ -599,11 +599,13 @@ function UserList({ users, selectedUid, selectedCampaignId, onSelectUser, onSele
 
 // ── Main App ──────────────────────────────────────────────────
 function App() {
-  const [user,     setUser]     = useState(undefined);
-  const [users,    setUsers]    = useState([]);
-  const [loading,  setLoading]  = useState(false);
-  const [selUid,   setSelUid]   = useState(null);
-  const [selCamp,  setSelCamp]  = useState(null);
+  const [user,        setUser]       = useState(undefined);
+  const [users,       setUsers]      = useState([]);
+  const [loading,     setLoading]    = useState(false);
+  const [selUid,      setSelUid]     = useState(null);
+  const [selCamp,     setSelCamp]    = useState(null);
+  const [lookupUid,   setLookupUid]  = useState("");
+  const [lookupError, setLookupError]= useState("");
 
   // Auth listener
   useEffect(() => {
@@ -611,30 +613,44 @@ function App() {
   }, []);
 
   // Load all user campaigns when logged in
-  const loadAllUsers = useCallback(async () => {
+  // Load campaigns for a specific UID
+  const loadUserByUid = useCallback(async (uid) => {
+    if (!uid.trim()) return;
     setLoading(true);
     try {
-      const usersSnap = await getDocs(collection(fbDb, "users"));
-      const results = [];
-      for (const userDoc of usersSnap.docs) {
-        const uid = userDoc.id;
-        const campsSnap = await getDocs(collection(fbDb, "users", uid, "campaigns"));
-        const campaigns = campsSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-          .sort((a,b) => (b.lastSaved||"").localeCompare(a.lastSaved||""));
-        // Use email from first campaign's playerName as fallback since we don't have auth user list
-        results.push({ uid, email: uid, campaigns });
-      }
-      // Try to get emails from campaign playerName
-      results.forEach(u => {
-        if (u.campaigns.length > 0) {
-          u.email = u.campaigns[0].playerName || u.uid;
-        }
+      const campsSnap = await getDocs(collection(fbDb, "users", uid.trim(), "campaigns"));
+      if (campsSnap.empty) { setLookupError("No campaigns found for that UID."); setLoading(false); return; }
+      const campaigns = campsSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a,b) => (b.lastSaved||"").localeCompare(a.lastSaved||""));
+      const label = campaigns[0]?.playerName || uid.trim();
+      setUsers(prev => {
+        const without = prev.filter(u => u.uid !== uid.trim());
+        return [...without, { uid: uid.trim(), email: label, campaigns }];
       });
-      setUsers(results.filter(u => u.campaigns.length > 0));
+      setSelUid(uid.trim());
+      setLookupError("");
+    } catch(e) {
+      setLookupError("Error: " + e.message);
+    } finally { setLoading(false); }
+  }, []);
+
+  // Also try loading the currently logged-in user's own campaigns automatically
+  const loadAllUsers = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const campsSnap = await getDocs(collection(fbDb, "users", user.uid, "campaigns"));
+      const campaigns = campsSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a,b) => (b.lastSaved||"").localeCompare(a.lastSaved||""));
+      if (campaigns.length > 0) {
+        const label = campaigns[0]?.playerName || user.email || user.uid;
+        setUsers([{ uid: user.uid, email: label, campaigns }]);
+        setSelUid(user.uid);
+      }
     } catch(e) {
       console.error("Load error:", e);
     } finally { setLoading(false); }
-  }, []);
+  }, [user]);
 
   useEffect(() => { if (user) loadAllUsers(); }, [user]);
 
@@ -686,9 +702,21 @@ function App() {
             onSelectUser={handleSelectUser}
             onSelectCampaign={handleSelectCampaign}
           />
-          <div style={{ padding:"12px 16px" }}>
+          <div style={{ padding:"12px 16px", borderTop:`1px solid ${C.border}` }}>
+            <div style={{ fontSize:10, color:C.dim, letterSpacing:1, textTransform:"uppercase", marginBottom:6 }}>
+              Look up player by UID
+            </div>
+            <input style={{ ...s.input, marginBottom:6, fontSize:11 }}
+              placeholder="Paste Firebase UID…"
+              value={lookupUid} onChange={e => setLookupUid(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && loadUserByUid(lookupUid)} />
+            {lookupError && <div style={{ color:C.red, fontSize:11, marginBottom:6 }}>{lookupError}</div>}
+            <button style={{ ...s.btn(C.accent), width:"100%", fontSize:11, marginBottom:8 }}
+              onClick={() => loadUserByUid(lookupUid)} disabled={loading}>
+              Load Player
+            </button>
             <button style={{ ...s.btn(C.dim), width:"100%", fontSize:11 }} onClick={loadAllUsers}>
-              ↺ Refresh
+              ↺ Reload My Campaigns
             </button>
           </div>
         </div>
