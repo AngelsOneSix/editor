@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Angels One Six — Campaign Editor</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #1a1a2e; color: #e0e0e0; font-family: 'Courier New', monospace; font-size: 14px; }
+    #root { min-height: 100vh; }
+    #error-display { display:none; position:fixed; inset:0; background:#fff; overflow:auto; padding:20px; font-family:monospace; font-size:13px; white-space:pre-wrap; color:#c00; z-index:9999; }
+  </style>
+</head>
+<body>
+  <div id="error-display"></div>
+  <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#4a9aba;font-size:18px;letter-spacing:2px">Loading…</div></div>
+
+  <script>
+    function showError(title, err) {
+      var d = document.getElementById('error-display');
+      d.style.display = 'block';
+      d.textContent = title + '\n\n' + (err && err.stack ? err.stack : String(err));
+    }
+    window.onerror = function(msg, src, line, col, err) { showError('window.onerror at line ' + line, err || msg); };
+    window.onunhandledrejection = function(e) { showError('Unhandled promise rejection', e.reason); };
+  </script>
+
+  <script type="module">
+    try {
+      var { initializeApp }    = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+      var { getAuth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+                               = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+      var { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, collectionGroup }
+                               = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+
+      window.__firebase_app       = { initializeApp };
+      window.__firebase_auth      = { getAuth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged };
+      window.__firebase_firestore = { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, collectionGroup };
+
+      var appCode = document.getElementById("app-source").textContent;
+      var transpiled = Babel.transform(appCode, { presets: ["react"] }).code;
+      var script = document.createElement("script");
+      script.textContent = transpiled + "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      document.body.appendChild(script);
+    } catch(e) { showError('Startup error', e); }
+  </script>
+
+  <script id="app-source" type="text/plain">
+const { useState, useEffect, useCallback } = React;
+const { initializeApp }    = window.__firebase_app;
+const { getAuth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } = window.__firebase_auth;
+const { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs } = window.__firebase_firestore;
+
+// ── Firebase ──────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey:            "AIzaSyAvBvTb07uwt1BCOx_lNWoPIHNTIiJDYPU",
+  authDomain:        "angels-one-six.firebaseapp.com",
+  projectId:         "angels-one-six",
+  storageBucket:     "angels-one-six.firebasestorage.app",
+  messagingSenderId: "1024178964228",
+  appId:             "1:1024178964280:web:856c4bbec1931f4ea1f251",
+};
+const fbApp  = initializeApp(firebaseConfig, "editor");
+const fbAuth = getAuth(fbApp);
+const fbDb   = getFirestore(fbApp);
+
+// ── Static reference data ──────────────────────────────────────
+const COURAGE_RATINGS  = ["Nutter","Keen","Game","Windy","LMF"];
+const ABILITY_RATINGS  = ["Wizard","Old Lag","New Chum","Sprog","Clod"];
+const PILOT_STATUSES   = ["Rested","Tired","Exhausted","Shattered","Hospitalised",
+                           "Missing in Action","Prisoner of War","Killed in Action",
+                           "Medical Retirement"];
+const AIRCRAFT_STATUSES = ["Available","In Repair","Destroyed"];
+const ALL_TRICKS = [
+  "Aerobat 1","Aerobat 2","Aerobat 3",
+  "Cold-Blooded Killer 1","Cold-Blooded Killer 2","Cold-Blooded Killer 3",
+  "Escape Artist",
+  "Knife Fighter 1","Knife Fighter 2","Knife Fighter 3",
+  "Marksman 1","Marksman 2","Marksman 3",
+  "Mechanic 1","Pitch Control","Mechanic 2","Mechanic 3",
+  "Natural Leader 1","Natural Leader 2","Natural Leader 3",
+  "Nerves of Steel 1","Nerves of Steel 2","Nerves of Steel 3",
+  "Section Leader",
+  "Survivor 1","Survivor 2","Survivor 3",
+];
+const ALL_AIRCRAFT = [
+  "Early Hurricane I","Hurricane I","Spitfire I","Early Spitfire I","Spitfire Ib","Spitfire II","Spitfire IIb",
+  "Me 109 E-1","Me 109 E-2","Me 109 E-4","Me 109 E-7/N","Me 109 F-0","Me 109 F-2",
+  "Me 110 C-3","Me 110 C-4","Me 110 E-1",
+];
+
+// ── Styles ────────────────────────────────────────────────────
+const C = {
+  bg:       "#1a1a2e",
+  panel:    "#16213e",
+  card:     "#0f3460",
+  accent:   "#e94560",
+  gold:     "#f5a623",
+  dim:      "#4a5568",
+  text:     "#e0e0e0",
+  muted:    "#8a9bb0",
+  green:    "#48bb78",
+  red:      "#fc8181",
+  border:   "#2d3748",
+};
+
+const s = {
+  page:    { minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'Courier New',monospace" },
+  header:  { background:C.panel, borderBottom:`2px solid ${C.accent}`, padding:"12px 20px",
+             display:"flex", alignItems:"center", justifyContent:"space-between" },
+  title:   { fontSize:20, fontWeight:"bold", color:C.accent, letterSpacing:3, textTransform:"uppercase" },
+  sub:     { fontSize:11, color:C.muted, letterSpacing:1 },
+  main:    { display:"flex", gap:0, minHeight:"calc(100vh - 53px)" },
+  sidebar: { width:280, background:C.panel, borderRight:`1px solid ${C.border}`, overflowY:"auto",
+             padding:"12px 0", flexShrink:0 },
+  content: { flex:1, overflowY:"auto", padding:20 },
+  btn: (bg=C.accent, color="#fff") => ({
+    background:bg, color, border:"none", borderRadius:3, padding:"6px 14px",
+    fontSize:12, fontFamily:"'Courier New',monospace", cursor:"pointer",
+    letterSpacing:1, textTransform:"uppercase",
+  }),
+  input: { background:C.bg, color:C.text, border:`1px solid ${C.border}`, borderRadius:3,
+           padding:"5px 8px", fontSize:13, fontFamily:"'Courier New',monospace", width:"100%" },
+  select: { background:C.bg, color:C.text, border:`1px solid ${C.border}`, borderRadius:3,
+            padding:"5px 8px", fontSize:13, fontFamily:"'Courier New',monospace", width:"100%" },
+  label:  { fontSize:11, color:C.muted, letterSpacing:1, textTransform:"uppercase", marginBottom:3, display:"block" },
+  section:{ background:C.card, borderRadius:6, padding:16, marginBottom:16, border:`1px solid ${C.border}` },
+  h2:     { fontSize:13, color:C.gold, letterSpacing:2, textTransform:"uppercase", marginBottom:12, borderBottom:`1px solid ${C.border}`, paddingBottom:6 },
+  h3:     { fontSize:12, color:C.accent, letterSpacing:1, textTransform:"uppercase", marginBottom:8 },
+  pill: (color=C.muted) => ({
+    display:"inline-block", background:color+"22", color, border:`1px solid ${color}55`,
+    borderRadius:3, padding:"1px 7px", fontSize:11, fontFamily:"'Courier New',monospace",
+  }),
+  row:    { display:"flex", gap:10, alignItems:"flex-start", marginBottom:10 },
+  col:    { flex:1 },
+  danger: { background:"#2d1a1a", border:`1px solid ${C.red}44`, borderRadius:6, padding:16, marginBottom:16 },
+};
+
+// ── Login Screen ──────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [email, setEmail]   = useState("");
+  const [pass,  setPass]    = useState("");
+  const [error, setError]   = useState("");
+  const [busy,  setBusy]    = useState(false);
+
+  const handleEmailLogin = async () => {
+    setError(""); setBusy(true);
+    try {
+      const cred = await signInWithEmailAndPassword(fbAuth, email, pass);
+      onLogin(cred.user);
+    } catch(e) {
+      setError(e.code === "auth/invalid-credential" ? "Invalid email or password." : e.message);
+    } finally { setBusy(false); }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError(""); setBusy(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      const cred = await signInWithPopup(fbAuth, provider);
+      onLogin(cred.user);
+    } catch(e) {
+      if (e.code !== "auth/popup-closed-by-user") {
+        setError(e.message);
+      }
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ ...s.page, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ width:340, background:C.panel, borderRadius:8, padding:32, border:`1px solid ${C.border}` }}>
+        <div style={{ ...s.title, marginBottom:4, fontSize:18 }}>CAMPAIGN EDITOR</div>
+        <div style={{ ...s.sub, marginBottom:24 }}>Angels One Six · Admin Tool</div>
+
+        {/* Google sign-in */}
+        <button style={{ ...s.btn("#fff", "#1a1a2e"), width:"100%", marginBottom:16,
+          display:"flex", alignItems:"center", justifyContent:"center", gap:10,
+          border:"1px solid #ccc", fontSize:13 }}
+          onClick={handleGoogleLogin} disabled={busy}>
+          <svg width="18" height="18" viewBox="0 0 48 48">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          </svg>
+          Sign in with Google
+        </button>
+
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
+          <div style={{ flex:1, height:1, background:C.border }} />
+          <span style={{ fontSize:11, color:C.dim }}>or</span>
+          <div style={{ flex:1, height:1, background:C.border }} />
+        </div>
+
+        <label style={s.label}>Email</label>
+        <input style={{ ...s.input, marginBottom:12 }} type="email" value={email}
+          onChange={e => setEmail(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleEmailLogin()} />
+        <label style={s.label}>Password</label>
+        <input style={{ ...s.input, marginBottom:16 }} type="password" value={pass}
+          onChange={e => setPass(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleEmailLogin()} />
+        {error && <div style={{ color:C.red, fontSize:12, marginBottom:12 }}>{error}</div>}
+        <button style={{ ...s.btn(), width:"100%" }} onClick={handleEmailLogin} disabled={busy}>
+          {busy ? "Signing in…" : "Sign In with Email"}
+        </button>
+        <div style={{ marginTop:12, fontSize:11, color:C.muted, textAlign:"center" }}>
+          Admin access only.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Pilot Editor ──────────────────────────────────────────────
+function PilotEditor({ pilot, onChange }) {
+  const [addTrick, setAddTrick] = useState("");
+
+  const update = (field, value) => onChange({ ...pilot, [field]: value });
+  const removeTrick = (t) => onChange({ ...pilot, tricks: pilot.tricks.filter(x => x !== t) });
+  const handleAddTrick = () => {
+    if (!addTrick || pilot.tricks.includes(addTrick)) return;
+    onChange({ ...pilot, tricks: [...pilot.tricks, addTrick] });
+    setAddTrick("");
+  };
+
+  const statusColor = {
+    "Rested":"#48bb78","Tired":C.gold,"Exhausted":"#ed8936","Shattered":C.red,
+    "Hospitalised":"#9f7aea","Missing in Action":"#667eea","Prisoner of War":"#667eea",
+    "Killed in Action":C.dim,"Medical Retirement":C.dim,
+  }[pilot.status] || C.muted;
+
+  return (
+    <div style={{ ...s.section, borderLeft:`3px solid ${statusColor}` }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={s.pill(statusColor)}>{pilot.status}</span>
+          <span style={{ fontSize:11, color:C.muted }}>{pilot.rank}</span>
+        </div>
+        <span style={{ fontSize:11, color:C.dim, fontFamily:"monospace" }}>{pilot.id}</span>
+      </div>
+
+      <div style={s.row}>
+        <div style={s.col}>
+          <label style={s.label}>Name</label>
+          <input style={s.input} value={pilot.name} onChange={e => update("name", e.target.value)} />
+        </div>
+        <div style={s.col}>
+          <label style={s.label}>Status</label>
+          <select style={s.select} value={pilot.status} onChange={e => update("status", e.target.value)}>
+            {PILOT_STATUSES.map(st => <option key={st}>{st}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div style={s.row}>
+        <div style={s.col}>
+          <label style={s.label}>Courage</label>
+          <select style={s.select} value={pilot.courage} onChange={e => update("courage", e.target.value)}>
+            {COURAGE_RATINGS.map(r => <option key={r}>{r}</option>)}
+          </select>
+        </div>
+        <div style={s.col}>
+          <label style={s.label}>Ability</label>
+          <select style={s.select} value={pilot.ability} onChange={e => update("ability", e.target.value)}>
+            {ABILITY_RATINGS.map(r => <option key={r}>{r}</option>)}
+          </select>
+        </div>
+        <div style={{ width:80 }}>
+          <label style={s.label}>XP</label>
+          <input style={s.input} type="number" min="0" value={pilot.experience}
+            onChange={e => update("experience", parseInt(e.target.value)||0)} />
+        </div>
+        <div style={{ width:70 }}>
+          <label style={s.label}>Claims</label>
+          <input style={s.input} type="number" min="0" value={pilot.claims}
+            onChange={e => update("claims", parseInt(e.target.value)||0)} />
+        </div>
+      </div>
+
+      <div style={s.row}>
+        <div style={{ width:80 }}>
+          <label style={s.label}>Perm Trauma</label>
+          <input style={s.input} type="number" min="0" value={pilot.permanentTraumaCount||0}
+            onChange={e => update("permanentTraumaCount", parseInt(e.target.value)||0)} />
+        </div>
+        <div style={{ width:80 }}>
+          <label style={s.label}>Perm Injury</label>
+          <input style={s.input} type="number" min="0" value={pilot.permanentInjuryCount||0}
+            onChange={e => update("permanentInjuryCount", parseInt(e.target.value)||0)} />
+        </div>
+        <div style={{ display:"flex", gap:16, alignItems:"center", paddingTop:18 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer", fontSize:12 }}>
+            <input type="checkbox" checked={!!pilot.tempTrauma} onChange={e => update("tempTrauma", e.target.checked)} />
+            <span style={{ color:C.muted }}>Temp Trauma</span>
+          </label>
+          <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer", fontSize:12 }}>
+            <input type="checkbox" checked={!!pilot.tempInjury} onChange={e => update("tempInjury", e.target.checked)} />
+            <span style={{ color:C.muted }}>Temp Injury</span>
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <label style={s.label}>Tricks</label>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:8 }}>
+          {pilot.tricks.map(t => (
+            <span key={t} style={{ ...s.pill(C.green), display:"flex", alignItems:"center", gap:4 }}>
+              {t}
+              <span onClick={() => removeTrick(t)}
+                style={{ cursor:"pointer", color:C.red, fontWeight:"bold", marginLeft:2 }}>×</span>
+            </span>
+          ))}
+          {pilot.tricks.length === 0 && <span style={{ color:C.dim, fontSize:12, fontStyle:"italic" }}>No tricks</span>}
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
+          <select style={{ ...s.select, flex:1 }} value={addTrick} onChange={e => setAddTrick(e.target.value)}>
+            <option value="">— Add trick —</option>
+            {ALL_TRICKS.filter(t => !pilot.tricks.includes(t)).map(t => <option key={t}>{t}</option>)}
+          </select>
+          <button style={s.btn(C.green)} onClick={handleAddTrick}>Add</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Aircraft Editor ───────────────────────────────────────────
+function AircraftEditor({ aircraft, onChange }) {
+  const statusColor = { "Available":C.green, "In Repair":C.gold, "Destroyed":C.red }[aircraft.status] || C.muted;
+  return (
+    <div style={{ ...s.section, borderLeft:`3px solid ${statusColor}`, padding:10 }}>
+      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+        <select style={{ ...s.select, flex:2 }} value={aircraft.typeId}
+          onChange={e => onChange({ ...aircraft, typeId: e.target.value })}>
+          {ALL_AIRCRAFT.map(a => <option key={a}>{a}</option>)}
+        </select>
+        <select style={{ ...s.select, flex:1 }} value={aircraft.status}
+          onChange={e => onChange({ ...aircraft, status: e.target.value })}>
+          {AIRCRAFT_STATUSES.map(st => <option key={st}>{st}</option>)}
+        </select>
+        <span style={{ fontSize:10, color:C.dim, whiteSpace:"nowrap" }}>{aircraft.id?.slice(-8)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Campaign Editor Panel ─────────────────────────────────────
+function CampaignPanel({ uid, campaignId, onBack, onDeleted }) {
+  const [campaign, setCampaign] = useState(null);
+  const [loading,  setLoading]  = useState(true);
+  const [saving,   setSaving]   = useState(false);
+  const [dirty,    setDirty]    = useState(false);
+  const [confirm,  setConfirm]  = useState(null); // "delete" | "save"
+  const [msg,      setMsg]      = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    getDoc(doc(fbDb, "users", uid, "campaigns", campaignId))
+      .then(snap => { if (snap.exists()) setCampaign(snap.data()); })
+      .catch(e => setMsg("Load error: " + e.message))
+      .finally(() => setLoading(false));
+  }, [uid, campaignId]);
+
+  const updatePilot = (idx, updated) => {
+    const pilots = [...campaign.pilots];
+    pilots[idx] = updated;
+    setCampaign({ ...campaign, pilots });
+    setDirty(true);
+  };
+
+  const addPilot = () => {
+    const newPilot = {
+      id: `pilot-${Date.now().toString(36)}`,
+      name: "New Pilot", rank: campaign.pilots[0]?.rank || "",
+      courage: "Game", ability: "Sprog", status: "Rested",
+      claims: 0, experience: 0, tricks: [],
+      tempTrauma: false, permanentTraumaCount: 0,
+      tempInjury: false, permanentInjuryCount: 0,
+    };
+    setCampaign({ ...campaign, pilots: [...campaign.pilots, newPilot] });
+    setDirty(true);
+  };
+
+  const removePilot = (idx) => {
+    const pilots = campaign.pilots.filter((_, i) => i !== idx);
+    setCampaign({ ...campaign, pilots });
+    setDirty(true);
+  };
+
+  const updateAircraft = (idx, updated) => {
+    const aircraft = [...campaign.aircraft];
+    aircraft[idx] = updated;
+    setCampaign({ ...campaign, aircraft });
+    setDirty(true);
+  };
+
+  const addAircraft = () => {
+    const newAc = {
+      id: `aircraft-${Date.now().toString(36)}`,
+      typeId: campaign.flightState?.activeAircraftTypes?.[0] || ALL_AIRCRAFT[0],
+      status: "Available",
+    };
+    setCampaign({ ...campaign, aircraft: [...campaign.aircraft, newAc] });
+    setDirty(true);
+  };
+
+  const removeAircraft = (idx) => {
+    const aircraft = campaign.aircraft.filter((_, i) => i !== idx);
+    setCampaign({ ...campaign, aircraft });
+    setDirty(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await setDoc(doc(fbDb, "users", uid, "campaigns", campaignId),
+        { ...campaign, lastSaved: new Date().toISOString() });
+      setDirty(false);
+      setMsg("Saved.");
+      setConfirm(null);
+    } catch(e) { setMsg("Save error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async () => {
+    setSaving(true);
+    try {
+      await deleteDoc(doc(fbDb, "users", uid, "campaigns", campaignId));
+      onDeleted();
+    } catch(e) { setMsg("Delete error: " + e.message); setSaving(false); }
+  };
+
+  if (loading) return <div style={{ padding:20, color:C.muted }}>Loading campaign…</div>;
+  if (!campaign) return <div style={{ padding:20, color:C.red }}>Campaign not found.</div>;
+
+  return (
+    <div>
+      {/* Header bar */}
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, flexWrap:"wrap" }}>
+        <button style={s.btn(C.dim)} onClick={onBack}>← Back</button>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:16, color:C.gold, fontWeight:"bold" }}>{campaign.callsign || "(No callsign)"}</div>
+          <div style={{ fontSize:11, color:C.muted }}>{campaign.playerName} · {campaign.side} · {campaign.campaignSize} campaign · ID: {campaignId}</div>
+        </div>
+        {dirty && <span style={{ fontSize:11, color:C.gold }}>● Unsaved changes</span>}
+        {msg   && <span style={{ fontSize:11, color: msg.startsWith("Save") && !msg.includes("error") ? C.green : C.red }}>{msg}</span>}
+        <button style={s.btn(C.green)} onClick={() => setConfirm("save")} disabled={saving || !dirty}>
+          {saving ? "Saving…" : "Save Changes"}
+        </button>
+      </div>
+
+      {/* Save confirmation */}
+      {confirm === "save" && (
+        <div style={{ ...s.danger, borderColor:C.gold+"44", background:"#1a2d1a", marginBottom:16 }}>
+          <div style={{ marginBottom:10, color:C.gold }}>⚠ Save changes to this campaign?</div>
+          <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>
+            This will overwrite the player's stored data immediately. Make sure your edits are correct.
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button style={s.btn(C.green)} onClick={handleSave}>Confirm Save</button>
+            <button style={s.btn(C.dim)} onClick={() => setConfirm(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Pilots */}
+      <div style={s.h2}>Pilots ({campaign.pilots.length})</div>
+      {campaign.pilots.map((p, i) => (
+        <div key={p.id} style={{ position:"relative" }}>
+          <PilotEditor pilot={p} onChange={updated => updatePilot(i, updated)} />
+          <button onClick={() => removePilot(i)}
+            style={{ ...s.btn(C.red), position:"absolute", top:12, right:12, fontSize:11, padding:"3px 8px" }}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <button style={{ ...s.btn(C.dim), marginBottom:24 }} onClick={addPilot}>+ Add Pilot</button>
+
+      {/* Aircraft */}
+      <div style={s.h2}>Aircraft ({campaign.aircraft.length})</div>
+      {campaign.aircraft.map((a, i) => (
+        <div key={a.id} style={{ display:"flex", gap:8, alignItems:"center", marginBottom:6 }}>
+          <div style={{ flex:1 }}>
+            <AircraftEditor aircraft={a} onChange={updated => updateAircraft(i, updated)} />
+          </div>
+          <button onClick={() => removeAircraft(i)}
+            style={{ ...s.btn(C.red), padding:"3px 8px", fontSize:11, flexShrink:0 }}>×</button>
+        </div>
+      ))}
+      <button style={{ ...s.btn(C.dim), marginBottom:24 }} onClick={addAircraft}>+ Add Aircraft</button>
+
+      {/* Flight state */}
+      <div style={s.h2}>Flight State</div>
+      <div style={{ ...s.section }}>
+        <div style={s.row}>
+          <div style={s.col}>
+            <label style={s.label}>Mission Phase</label>
+            <select style={s.select} value={campaign.flightState?.missionPhase || "none"}
+              onChange={e => { setCampaign({ ...campaign, flightState: { ...campaign.flightState, missionPhase: e.target.value }}); setDirty(true); }}>
+              {["none","briefing","inflight","debrief"].map(p => <option key={p}>{p}</option>)}
+            </select>
+          </div>
+          <div style={s.col}>
+            <label style={s.label}>Active Aircraft Types</label>
+            <div style={{ fontSize:12, color:C.muted, padding:"6px 0" }}>
+              {(campaign.flightState?.activeAircraftTypes || []).join(" · ") || "—"}
+            </div>
+          </div>
+        </div>
+        <div>
+          <label style={s.label}>Unlocked Types</label>
+          <div style={{ fontSize:12, color:C.muted }}>
+            {(campaign.flightState?.unlockedTypes || []).join(", ") || "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Mission log summary */}
+      <div style={s.h2}>Mission Log ({(campaign.missions||[]).length} missions)</div>
+      <div style={{ ...s.section }}>
+        {(campaign.missions||[]).length === 0
+          ? <span style={{ color:C.dim, fontStyle:"italic", fontSize:12 }}>No missions recorded.</span>
+          : (campaign.missions||[]).map((m, i) => (
+            <div key={i} style={{ display:"flex", gap:12, paddingBottom:6, marginBottom:6,
+              borderBottom:`1px solid ${C.border}`, fontSize:12, color:C.muted }}>
+              <span style={{ color:C.gold, minWidth:28 }}>#{m.missionNumber||i+1}</span>
+              <span>{m.datePlayed||"—"}</span>
+              <span style={s.pill(C.accent)}>{m.role||"—"}</span>
+              <span>{m.pairings?.length||0} pilots</span>
+              <span>{m.lostABuddyCount||0} lost</span>
+            </div>
+          ))
+        }
+      </div>
+
+      {/* Danger zone */}
+      <div style={s.danger}>
+        <div style={{ ...s.h3, color:C.red, marginBottom:8 }}>Danger Zone</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>
+          Permanently delete this campaign. This cannot be undone.
+        </div>
+        {confirm === "delete" ? (
+          <div>
+            <div style={{ color:C.red, marginBottom:8, fontSize:12 }}>
+              Are you absolutely sure? Type DELETE to confirm.
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button style={s.btn(C.red)} onClick={handleDelete} disabled={saving}>
+                {saving ? "Deleting…" : "Yes, delete permanently"}
+              </button>
+              <button style={s.btn(C.dim)} onClick={() => setConfirm(null)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button style={s.btn(C.red)} onClick={() => setConfirm("delete")}>Delete Campaign</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── User Sidebar ──────────────────────────────────────────────
+function UserList({ users, selectedUid, selectedCampaignId, onSelectUser, onSelectCampaign }) {
+  return (
+    <div>
+      {users.map(u => (
+        <div key={u.uid}>
+          <div onClick={() => onSelectUser(u.uid)}
+            style={{ padding:"8px 16px", cursor:"pointer", borderBottom:`1px solid ${C.border}`,
+              background: selectedUid === u.uid && !selectedCampaignId ? C.card : "transparent",
+              display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ color:C.accent, fontSize:18 }}>▶</span>
+            <div>
+              <div style={{ fontSize:12, color:C.text }}>{u.email}</div>
+              <div style={{ fontSize:10, color:C.muted }}>{u.campaigns.length} campaign{u.campaigns.length !== 1 ? "s" : ""}</div>
+            </div>
+          </div>
+          {selectedUid === u.uid && u.campaigns.map(c => (
+            <div key={c.id} onClick={() => onSelectCampaign(u.uid, c.id)}
+              style={{ padding:"6px 16px 6px 36px", cursor:"pointer",
+                background: selectedCampaignId === c.id ? C.card : "transparent",
+                borderBottom:`1px solid ${C.border}22`,
+                borderLeft: selectedCampaignId === c.id ? `2px solid ${C.gold}` : "2px solid transparent" }}>
+              <div style={{ fontSize:12, color: selectedCampaignId === c.id ? C.gold : C.muted }}>
+                {c.callsign || "(No callsign)"}
+              </div>
+              <div style={{ fontSize:10, color:C.dim }}>{c.side} · {c.campaignSize}</div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────
+function App() {
+  const [user,     setUser]     = useState(undefined);
+  const [users,    setUsers]    = useState([]);
+  const [loading,  setLoading]  = useState(false);
+  const [selUid,   setSelUid]   = useState(null);
+  const [selCamp,  setSelCamp]  = useState(null);
+
+  // Auth listener
+  useEffect(() => {
+    return onAuthStateChanged(fbAuth, u => setUser(u || null));
+  }, []);
+
+  // Load all user campaigns when logged in
+  const loadAllUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const usersSnap = await getDocs(collection(fbDb, "users"));
+      const results = [];
+      for (const userDoc of usersSnap.docs) {
+        const uid = userDoc.id;
+        const campsSnap = await getDocs(collection(fbDb, "users", uid, "campaigns"));
+        const campaigns = campsSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .sort((a,b) => (b.lastSaved||"").localeCompare(a.lastSaved||""));
+        // Use email from first campaign's playerName as fallback since we don't have auth user list
+        results.push({ uid, email: uid, campaigns });
+      }
+      // Try to get emails from campaign playerName
+      results.forEach(u => {
+        if (u.campaigns.length > 0) {
+          u.email = u.campaigns[0].playerName || u.uid;
+        }
+      });
+      setUsers(results.filter(u => u.campaigns.length > 0));
+    } catch(e) {
+      console.error("Load error:", e);
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { if (user) loadAllUsers(); }, [user]);
+
+  const handleSelectUser = (uid) => {
+    setSelUid(uid === selUid ? null : uid);
+    setSelCamp(null);
+  };
+
+  const handleSelectCampaign = (uid, campId) => {
+    setSelUid(uid);
+    setSelCamp(campId);
+  };
+
+  const handleDeleted = () => {
+    setSelCamp(null);
+    loadAllUsers();
+  };
+
+  if (user === undefined) return (
+    <div style={{ ...s.page, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <span style={{ color:C.muted }}>Loading…</span>
+    </div>
+  );
+
+  if (!user) return <LoginScreen onLogin={u => setUser(u)} />;
+
+  return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <div>
+          <div style={s.title}>Campaign Editor</div>
+          <div style={s.sub}>Angels One Six · Admin</div>
+        </div>
+        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          <span style={{ fontSize:11, color:C.muted }}>{user.email}</span>
+          <button style={s.btn(C.dim)} onClick={() => signOut(fbAuth).then(() => setUser(null))}>Sign Out</button>
+        </div>
+      </div>
+
+      <div style={s.main}>
+        <div style={s.sidebar}>
+          <div style={{ padding:"8px 16px", fontSize:10, color:C.dim, letterSpacing:2, textTransform:"uppercase", borderBottom:`1px solid ${C.border}`, marginBottom:4 }}>
+            {loading ? "Loading…" : `${users.length} player${users.length !== 1 ? "s" : ""}`}
+          </div>
+          <UserList
+            users={users}
+            selectedUid={selUid}
+            selectedCampaignId={selCamp}
+            onSelectUser={handleSelectUser}
+            onSelectCampaign={handleSelectCampaign}
+          />
+          <div style={{ padding:"12px 16px" }}>
+            <button style={{ ...s.btn(C.dim), width:"100%", fontSize:11 }} onClick={loadAllUsers}>
+              ↺ Refresh
+            </button>
+          </div>
+        </div>
+
+        <div style={s.content}>
+          {!selCamp && (
+            <div style={{ color:C.muted, fontSize:13, marginTop:40, textAlign:"center" }}>
+              {loading
+                ? "Loading player data…"
+                : selUid
+                  ? "Select a campaign from the sidebar."
+                  : "Select a player from the sidebar to begin."}
+            </div>
+          )}
+          {selCamp && selUid && (
+            <CampaignPanel
+              key={selCamp}
+              uid={selUid}
+              campaignId={selCamp}
+              onBack={() => setSelCamp(null)}
+              onDeleted={handleDeleted}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+  </script>
+</body>
+</html>
